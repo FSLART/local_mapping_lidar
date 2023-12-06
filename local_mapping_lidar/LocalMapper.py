@@ -41,6 +41,8 @@ class LocalMapper(Node):
         # get the outlier points (without the ground plane)
         outlier_cloud = pcd.select_by_index(inliers, invert=True)
 
+        return outlier_cloud
+
 
 
 
