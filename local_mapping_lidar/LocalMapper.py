@@ -13,7 +13,7 @@ class LocalMapper(Node):
         super().__init__('local_mapper')
 
         # point cloud subscriber
-        self.pcl_sub = self.create_subscription(PointCloud2, '/pointcloud', self.pcl_callback, 10)
+        self.pcd_sub = self.create_subscription(PointCloud2, '/pointcloud', self.pcd_callback, 10)
 
         # cone publisher
         self.cone_pub = self.create_publisher(ConeArray, '/cones', 10)
@@ -22,7 +22,7 @@ class LocalMapper(Node):
         self.marker_pub = self.create_publisher(MarkerArray, '/markers', 10)
 
 
-    def pcl_callback(self, msg):
+    def pcd_callback(self, msg):
         # TODO: convert ros point cloud to open3d point cloud
         # TODO: transform the point cloud to the base_link frame
         # TODO: remove ground plane using RANSAC
@@ -30,6 +30,20 @@ class LocalMapper(Node):
         # TODO: publish the center of each cluster as a marker and as a cone
 
         print("TODO: received a point cloud message")
+
+    def remove_ground_plane(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+
+        # remove the ground plane using RANSAC
+        plane_model, inliers = pcd.segment_plane(distance_threshold=0.01,
+                                                ransac_n=3,
+                                                num_iterations=1000)
+        
+        # get the outlier points (without the ground plane)
+        outlier_cloud = pcd.select_by_index(inliers, invert=True)
+
+
+
+
 
 def main(args=None):
     rclpy.init(args=args)
