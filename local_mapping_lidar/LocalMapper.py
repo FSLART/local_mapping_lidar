@@ -10,6 +10,8 @@ from tf2_ros import TransformListener, Buffer, TransformStamped, TransformExcept
 import open3d as o3d
 import numpy as np
 
+import threading
+
 class LocalMapper(Node):
 
     def __init__(self):
@@ -91,15 +93,25 @@ class LocalMapper(Node):
         # get the cluster centers
         cluster_centers = []
 
+        # list of threads
+        threads = []
+
+        # mutex for the cluster centers list
+        mutex = threading.Lock()
+
         # for each cluster
+        # use multi-threading to speed up the process
         for label in np.unique(labels):
             if label == -1:
                 continue
-            # query the points in the cluster using the label
-            cluster = pcd.select_by_index(np.where(labels == label)[0])
-            # get the geometric center of the cluster
-            cluster_center = cluster.get_center()
-            cluster_centers.append(cluster_center)
+
+            t = threading.Thread(target=cluster_center_routine, args=(pcd, label, cluster_centers, mutex))
+            threads.append(t)
+            t.start()
+
+        # wait for all threads to finish
+        for t in threads:
+            t.join()
 
         return cluster_centers
     
@@ -151,6 +163,22 @@ class LocalMapper(Node):
 
         return marker_array
 
+def cluster_center_routine(pcd: o3d.geometry.PointCloud, label: o3d.utility.IntVector, centers: list, mutex: threading.Lock) -> None:
+
+    # get cluster using the label
+    cluster = pcd.select_by_index(np.where(label == label)[0])
+
+    # get the geometric center of the cluster
+    cluster_center = cluster.get_center()
+
+    # lock the mutex
+    mutex.acquire()
+
+    # append the cluster center to the list of centers
+    centers.append(cluster_center)
+
+    # release the mutex
+    mutex.release()
 
 
 def main(args=None):
