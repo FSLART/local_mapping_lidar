@@ -51,10 +51,14 @@ class LocalMapper(Node):
 
         # get the cluster centers
         cluster_centers = []
+
+        # for each cluster
         for label in np.unique(labels):
             if label == -1:
                 continue
+            # query the points in the cluster using the label
             cluster = pcd.select_by_index(np.where(labels == label)[0])
+            # get the geometric center of the cluster
             cluster_center = cluster.get_center()
             cluster_centers.append(cluster_center)
 
