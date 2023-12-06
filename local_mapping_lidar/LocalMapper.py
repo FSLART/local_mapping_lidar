@@ -6,6 +6,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from lart_msgs.msg import Cone, ConeArray
 
 import open3d as o3d
+import numpy as np
 
 class LocalMapper(Node):
 
@@ -42,8 +43,22 @@ class LocalMapper(Node):
         outlier_cloud = pcd.select_by_index(inliers, invert=True)
 
         return outlier_cloud
+    
+    def cluster_cones(self, pcd: o3d.geometry.PointCloud) -> list:
 
+        # get the clusters using DBSCAN
+        labels = np.array(pcd.cluster_dbscan(eps=0.02, min_points=10))
 
+        # get the cluster centers
+        cluster_centers = []
+        for label in np.unique(labels):
+            if label == -1:
+                continue
+            cluster = pcd.select_by_index(np.where(labels == label)[0])
+            cluster_center = cluster.get_center()
+            cluster_centers.append(cluster_center)
+
+        return cluster_centers
 
 
 
