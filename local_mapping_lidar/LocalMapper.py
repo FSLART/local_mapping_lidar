@@ -47,9 +47,13 @@ class LocalMapper(Node):
             self.get_logger().warn(e)
             return
         
-        # convert the transform to a numpy array
-        transform_matrix = np.array([[transform.transform.rotation.w, transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z],
-                                    [transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z, 1.0]])
+        # convert the transform to a 4x4 homogeneous matrix
+        transform_matrix = np.array([[transform.transform.rotation.w, -transform.transform.rotation.z, transform.transform.rotation.y, transform.transform.translation.x],
+                                        [transform.transform.rotation.z, transform.transform.rotation.w, -transform.transform.rotation.x, transform.transform.translation.y],
+                                        [-transform.transform.rotation.y, transform.transform.rotation.x, transform.transform.rotation.w, transform.transform.translation.z],
+                                        [0.0, 0.0, 0.0, 1.0]])
+        # invert the transform (sensor to base_link instead)
+        transform_matrix = np.linalg.inv(transform_matrix)
         
         # transform the point cloud
         pcd.transform(transform_matrix)
