@@ -1,7 +1,7 @@
 import rclpy 
 from rclpy.node import Node
 
-from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointCloud2, PointField
 from visualization_msgs.msg import Marker, MarkerArray
 from lart_msgs.msg import Cone, ConeArray
 
@@ -9,6 +9,7 @@ from tf2_ros import TransformListener, Buffer, TransformStamped, TransformExcept
 
 import open3d as o3d
 import numpy as np
+from open3d_ros_helper import open3d_ros_helper as orh
 
 import threading
 
@@ -26,18 +27,28 @@ class LocalMapper(Node):
         # marker publisher
         self.marker_pub = self.create_publisher(MarkerArray, '/markers', 10)
 
+        # downsampled point cloud publisher
+        self.downsampled_pub = self.create_publisher(PointCloud2, '/downsampled', 10)
+
+        # point cloud with no ground plane publisher
+        self.no_ground_pub = self.create_publisher(PointCloud2, '/no_ground', 10)
+
         # create the transform buffer
         self.tf_buffer = Buffer()
 
         # create the transform listener
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
+        self.get_logger().info("READY")
+        
+
 
     def pcd_callback(self, msg):
 
+        self.get_logger().info("Received pointcloud...")
+
         # convert ros point cloud to open3d point cloud
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(np.array(msg.data, dtype=np.float32).reshape(-1, 3))
+        pcd = orh.rospc_to_o3dpc(msg)
 
         # transform the point cloud to the base_link frame
         # lookup the transform
@@ -46,22 +57,25 @@ class LocalMapper(Node):
         except TransformException as e:
             self.get_logger().warn(e)
             return
-        
-        # convert the transform to a 4x4 homogeneous matrix
-        transform_matrix = np.array([[transform.transform.rotation.w, -transform.transform.rotation.z, transform.transform.rotation.y, transform.transform.translation.x],
-                                        [transform.transform.rotation.z, transform.transform.rotation.w, -transform.transform.rotation.x, transform.transform.translation.y],
-                                        [-transform.transform.rotation.y, transform.transform.rotation.x, transform.transform.rotation.w, transform.transform.translation.z],
-                                        [0.0, 0.0, 0.0, 1.0]])
-        # invert the transform (sensor to base_link instead)
-        transform_matrix = np.linalg.inv(transform_matrix)
+
+        # downsample the pointcloud
+        pcd = pcd.voxel_down_sample(voxel_size=0.05)
+
+        # publish the downsampled point cloud
+        self.downsampled_pub.publish(orh.o3dpc_to_rospc(pcd))
         
         # transform the point cloud
-        pcd.transform(transform_matrix)
+        pcd = orh.do_transform_point(pcd, transform)
 
         # remove ground plane using RANSAC
+        self.get_logger().info("Removing ground plane...")
         pcd = self.remove_ground_plane(pcd)
 
+        # publish the point cloud with no ground plane
+        self.no_ground_pub.publish(orh.o3dpc_to_rospc(pcd))
+
         # cluster the cones using DBSCAN
+        self.get_logger().info("Clustering...")
         cone_coords = self.cluster_cones(pcd)
 
         # create the ConeArray message
@@ -69,6 +83,8 @@ class LocalMapper(Node):
 
         # create the MarkerArray message
         marker_array = self.to_marker_array(cone_coords)
+
+        self.get_logger().info("Publishing.")
 
         # publish the cone array message
         self.cone_pub.publish(cone_array)
@@ -80,9 +96,9 @@ class LocalMapper(Node):
     def remove_ground_plane(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
 
         # remove the ground plane using RANSAC
-        plane_model, inliers = pcd.segment_plane(distance_threshold=0.01,
+        plane_model, inliers = pcd.segment_plane(distance_threshold=0.05,
                                                 ransac_n=3,
-                                                num_iterations=1000)
+                                                num_iterations=10)
         
         # get the outlier points (without the ground plane)
         outlier_cloud = pcd.select_by_index(inliers, invert=True)
@@ -92,7 +108,7 @@ class LocalMapper(Node):
     def cluster_cones(self, pcd: o3d.geometry.PointCloud) -> list:
 
         # get the clusters using DBSCAN
-        labels = np.array(pcd.cluster_dbscan(eps=0.02, min_points=10))
+        labels = np.array(pcd.cluster_dbscan(eps=1.0, min_points=5))
 
         # get the cluster centers
         cluster_centers = []
@@ -102,6 +118,8 @@ class LocalMapper(Node):
 
         # mutex for the cluster centers list
         mutex = threading.Lock()
+
+        self.get_logger().info("Found {} clusters.".format(labels.max() + 1))
 
         # for each cluster
         # use multi-threading to speed up the process
@@ -117,6 +135,16 @@ class LocalMapper(Node):
         for t in threads:
             t.join()
 
+        """
+        for label in np.unique(labels):
+            if label == 1:
+                continue
+
+            cluster = pcd.select_by_index(np.where(label == label)[0])
+
+            cluster_centers.append(cluster.get_center())
+        """
+
         return cluster_centers
     
     def to_cone_array(self, cluster_centers: list) -> ConeArray:
@@ -129,9 +157,9 @@ class LocalMapper(Node):
             # create a cone message
             cone = Cone()
             # set the cone message fields
-            cone.x = cluster_center[0]
-            cone.y = cluster_center[1]
-            cone.z = cluster_center[2]
+            cone.position.x = cluster_center[0]
+            cone.position.y = cluster_center[1]
+            cone.position.z = 0.0
             # append the cone message to the cone array message
             cone_array.cones.append(cone)
 
